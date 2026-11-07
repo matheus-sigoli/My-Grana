@@ -46,7 +46,6 @@ export async function linhasDoPdf(bytes: Uint8Array): Promise<string[]> {
         if (texto.trim()) linhas.push(texto.trim());
       }
     }
-    await pdf.destroy?.();
     if (linhas.join("").replace(/\s/g, "").length < 20) throw new PdfSemTexto();
     return linhas;
   })();
