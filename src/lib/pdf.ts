@@ -3,7 +3,7 @@ import "server-only";
 /**
  * Texto de um PDF de extrato, linha por linha, na ordem em que aparece na página.
  * Usa o unpdf (PDF.js para servidor), carregado só quando alguém importa um PDF.
- * Segurança: sem eval de fontes, sem fontes do sistema, limite de páginas e de tempo.
+ * Segurança: PDF.js atual não usa eval; sem fontes do sistema, com limite de páginas e de tempo.
  */
 export class PdfComSenha extends Error {}
 export class PdfSemTexto extends Error {}
@@ -18,7 +18,7 @@ export async function linhasDoPdf(bytes: Uint8Array): Promise<string[]> {
   const tarefa = (async () => {
     let pdf;
     try {
-      pdf = await getDocumentProxy(bytes, { isEvalSupported: false, useSystemFonts: false, disableFontFace: true, stopAtErrors: false });
+      pdf = await getDocumentProxy(bytes, { useSystemFonts: false, disableFontFace: true });
     } catch (e) {
       if ((e as { name?: string })?.name === "PasswordException") throw new PdfComSenha();
       throw e;
