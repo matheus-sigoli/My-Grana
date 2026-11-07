@@ -11,9 +11,11 @@ const cabecalhos = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Leitor de PDF (PDF.js) roda como pacote do Node, sem passar pelo bundler.
+  serverExternalPackages: ["unpdf"],
   experimental: {
-    // Extrato OFX/CSV de até 2 MB + o resto do formulário. Ações de servidor já validam a origem (CSRF) por padrão.
-    serverActions: { bodySizeLimit: "3mb" },
+    // Extrato em PDF de até 5 MB (OFX/CSV até 2 MB) + o resto do formulário. Ações de servidor já validam a origem (CSRF) por padrão.
+    serverActions: { bodySizeLimit: "6mb" },
   },
   async headers() {
     return [

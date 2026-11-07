@@ -12,6 +12,7 @@ export type LinhaImportada = {
 };
 
 export const MAX_BYTES = 2 * 1024 * 1024;
+export const MAX_BYTES_PDF = 5 * 1024 * 1024;
 export const MAX_LINHAS = 3000;
 
 /** Data real (31/02 não passa: o JS aceitaria e viraria 03/03). */
@@ -125,6 +126,84 @@ export function lerCsv(texto: string): { linhas: LinhaImportada[]; erro?: string
     linhas.push({ data, descricao, valorCentavos: valor, idExterno: iId >= 0 ? (c[iId] ?? "").slice(0, 120) || null : null });
   }
   return { linhas };
+}
+
+// ------------------------------------------------------------------ PDF (texto já extraído)
+
+const MESES: Record<string, number> = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
+const RE_DATA_NUM = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?(?![\d,])/;
+const RE_DATA_MES = /^(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*\.?(?:\s*(?:de\s+)?(\d{4}))?(?![a-z])/;
+// valor brasileiro: "-1.234,56", "R$ 50,00", "- R$ 12,90", "45,00 D", "(12,00)"
+const RE_VALOR = /(\()?(?:([-−])\s*)?(?:R\$\s*)?(?:([-−])\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})(\))?(?:\s*([DC])(?![a-zA-Z]))?/g;
+const RE_IGNORAR = /\b(saldo|total|limite|resumo|vencimento|p[aá]gina|per[ií]odo|ag[eê]ncia|cpf|cnpj)\b/i;
+const RE_NEG = /(compra|pagamento|pagto|pix enviado|enviad[oa]|d[eé]bito|saque|tarifa|boleto|iof|juros|anuidade|aplica[cç][aã]o|parcela)/i;
+const RE_POS = /(recebid|dep[oó]sito|cr[eé]dito|estorno|rendimento|\brend\b|resgate|sal[aá]rio|reembolso|devolu[cç][aã]o)/i;
+const RE_CREDITO_CARTAO = /(pagamento|estorno|cr[eé]dito|desconto|devolu[cç][aã]o)/i;
+
+/**
+ * Extrato em PDF (texto linha a linha, como aparece na página). Heurística feita para os layouts comuns
+ * (Nubank, Itaú, Inter, Bradesco, C6…): data no começo da linha ou como título do dia, descrição e valor;
+ * o último valor da linha costuma ser o saldo e é ignorado. Tudo vai para a revisão antes de virar lançamento.
+ */
+export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao: boolean }): { linhas: LinhaImportada[] } {
+  const texto = linhasTexto.join("\n");
+  const anos = [...texto.matchAll(/\b\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})\b|\b(20\d{2})\b/g)].map((m) => Number(m[1] ?? m[2])).filter((a) => a <= Number(e.hoje.slice(0, 4)) + 1);
+  const anoBase = anos.length ? Math.max(...anos) : Number(e.hoje.slice(0, 4));
+  const montarData = (dia: number, mes: number, ano?: number) => {
+    const comAno = (a: number) => `${a}-${String(mes).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+    if (ano) return dataParaIso(comAno(ano < 100 ? 2000 + ano : ano));
+    const iso = dataParaIso(comAno(anoBase));
+    return iso && iso > e.hoje ? dataParaIso(comAno(anoBase - 1)) : iso;
+  };
+
+  let dataAtual: string | null = null;
+  let contexto = 0; // +1 entradas, -1 saídas (títulos de seção)
+  const out: LinhaImportada[] = [];
+  for (const bruta of linhasTexto.slice(0, MAX_LINHAS * 2)) {
+    const linha = bruta.replace(/\s+/g, " ").trim();
+    if (!linha) continue;
+    const baixa = semAcento(linha);
+    if (/^(total de )?(entradas|creditos|receitas|dinheiro recebido)\b/.test(baixa)) contexto = 1;
+    else if (/^(total de )?(saidas|debitos|despesas|gastos|dinheiro enviado)\b/.test(baixa)) contexto = -1;
+
+    // data no começo da linha (numérica ou "05 NOV 2026" / "5 de novembro de 2026")
+    let resto = linha;
+    const mNum = linha.match(RE_DATA_NUM);
+    const mMes = mNum ? null : baixa.match(RE_DATA_MES);
+    if (mNum) {
+      const d = montarData(Number(mNum[1]), Number(mNum[2]), mNum[3] ? Number(mNum[3]) : undefined);
+      if (d) { dataAtual = d; resto = linha.slice(mNum[0].length); }
+    } else if (mMes) {
+      const d = montarData(Number(mMes[1]), MESES[mMes[2]], mMes[3] ? Number(mMes[3]) : undefined);
+      if (d) { dataAtual = d; resto = linha.slice(mMes[0].length); }
+    }
+
+    if (RE_IGNORAR.test(baixa)) continue;
+    const valores = [...resto.matchAll(RE_VALOR)];
+    if (!valores.length || !dataAtual) continue;
+
+    const v = valores[0];
+    const negativo = !!(v[2] || v[3] || (v[1] && v[5]) || v[6] === "D");
+    const positivoExplicito = v[6] === "C";
+    const centavos = valorParaCentavos(v[4]);
+    if (!centavos) continue;
+
+    let descricao = resto.slice(0, v.index).trim() || resto.slice((v.index ?? 0) + v[0].length).trim();
+    descricao = limparTexto(descricao.replace(/R\$/g, "").replace(/^[-–·|•\s]+|[-–·|•\s]+$/g, "")) || "Sem descrição";
+
+    let sinal: number;
+    // Na fatura, compras vêm positivas; créditos (pagamento, estorno) vêm com "-" ou com essas palavras.
+    if (e.cartao) sinal = negativo || RE_CREDITO_CARTAO.test(descricao) ? 1 : -1;
+    else if (negativo) sinal = -1;
+    else if (positivoExplicito) sinal = 1;
+    else if (RE_POS.test(descricao)) sinal = 1;
+    else if (RE_NEG.test(descricao)) sinal = -1;
+    else sinal = contexto || -1;
+
+    out.push({ data: dataAtual, descricao, valorCentavos: sinal * Math.abs(centavos), idExterno: null });
+    if (out.length >= MAX_LINHAS) break;
+  }
+  return { linhas: out };
 }
 
 /**

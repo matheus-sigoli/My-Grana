@@ -18,10 +18,10 @@ export function FormImportar({ contas, cartoes }: { contas: { id: string; nome: 
         </select>
       </div>
       <div>
-        <label className="rotulo" htmlFor="arquivo">Arquivo (.ofx ou .csv, até 2 MB)</label>
-        <input id="arquivo" name="arquivo" type="file" required accept=".ofx,.qfx,.csv,.txt,text/csv,application/x-ofx"
+        <label className="rotulo" htmlFor="arquivo">Arquivo do extrato (PDF, OFX ou CSV)</label>
+        <input id="arquivo" name="arquivo" type="file" required accept=".pdf,.ofx,.qfx,.csv,.txt,application/pdf,text/csv,application/x-ofx"
           className="campo py-2.5 file:mr-3 file:rounded-full file:border-0 file:bg-fundo file:px-3 file:py-1.5 file:font-semibold file:text-tinta" />
-        <p className="dica">No app do banco, procure “Exportar extrato” e escolha OFX (melhor) ou CSV.</p>
+        <p className="dica">No app do banco, baixe o extrato ou a fatura em PDF. PDF até 5 MB; OFX e CSV até 2 MB.</p>
       </div>
       <Erro msg={estado.erro} />
       <BotaoEnviar className="btn w-full" enviando="Lendo o extrato…">Ler extrato</BotaoEnviar>

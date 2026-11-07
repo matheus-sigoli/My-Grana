@@ -15,3 +15,10 @@
 
 ## Consequências
 - Um parser por formato/banco para CSV (layouts variam); OFX é padrão.
+
+## Atualização (07/11/2026): PDF
+Extrato e fatura em **PDF** também são aceitos (é o formato mais fácil de baixar nos apps de banco).
+- O texto é extraído no servidor com `unpdf` (PDF.js), sem eval de fontes, até 40 páginas e 15 s; o arquivo não é guardado.
+- As linhas são remontadas pela posição na página e lidas por heurística (`lerTextoExtrato`): data no começo da linha ou como título do dia, descrição, primeiro valor (o último costuma ser o saldo); sinal por "-", "D/C", título da seção (entradas/saídas) ou palavras como "recebido"/"compra".
+- PDF com senha ou escaneado (imagem) recebe uma mensagem explicando o que fazer — nunca pedimos a senha do PDF.
+- Como cada banco monta o PDF de um jeito, a revisão na caixa de entrada continua obrigatória.

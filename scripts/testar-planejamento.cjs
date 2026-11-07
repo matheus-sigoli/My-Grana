@@ -197,5 +197,53 @@ eq('csv fórmula escapada', R.celulaCsv('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")
 eq('csv número BR', R.celulaCsv(-123456), '-1234,56');
 eq('csv ponto e vírgula', R.celulaCsv('a;b'), '"a;b"');
 
+// IMPORTAÇÃO DE PDF (texto extraído)
+const nubank = [
+  'Extrato de 01 OUT 2026 a 31 OUT 2026',
+  '05 OUT 2026 Total de entradas + 1.500,00',
+  'Transferência recebida pelo Pix  FULANO DE TAL  1.500,00',
+  '06 OUT 2026 Total de saídas - 245,90',
+  'Compra no débito  PADARIA DO ZE  45,90',
+  'Transferência enviada pelo Pix  ALUGUEL  200,00',
+  'Saldo do dia 1.254,10',
+];
+const rn = I.lerTextoExtrato(nubank, { hoje: '2026-11-07', cartao: false }).linhas;
+eq('pdf nubank linhas', rn.length, 3);
+eq('pdf nubank entrada', [rn[0].data, rn[0].valorCentavos], ['2026-10-05', 150000]);
+eq('pdf nubank saída', [rn[1].data, rn[1].descricao, rn[1].valorCentavos], ['2026-10-06', 'Compra no débito PADARIA DO ZE', -4590]);
+eq('pdf nubank pix enviado', rn[2].valorCentavos, -20000);
+
+const itauPdf = [
+  'Período: 01/10/2026 a 31/10/2026',
+  'data lançamento valor (R$) saldo (R$)',
+  '01/10 SALDO ANTERIOR 1.000,00',
+  '03/10 PIX TRANSF JOAO 03/10 -150,00 850,00',
+  '05/10 REND PAGO APLIC AUT 2,35 852,35',
+  '10/10 SISPAG SALARIO EMPRESA 5.000,00 5.852,35',
+];
+const ri = I.lerTextoExtrato(itauPdf, { hoje: '2026-11-07', cartao: false }).linhas;
+eq('pdf itaú ignora saldo anterior', ri.length, 3);
+eq('pdf itaú negativo e ignora coluna saldo', [ri[0].data, ri[0].valorCentavos], ['2026-10-03', -15000]);
+eq('pdf itaú rendimento positivo', ri[1].valorCentavos, 235);
+eq('pdf itaú salário', ri[2].valorCentavos, 500000);
+
+const inter = [
+  '5 de outubro de 2026 Saldo do dia: R$ 300,00',
+  'Pix enviado: "Mercado Bom" -R$ 89,90',
+  'Pix recebido: "Maria" R$ 50,00',
+];
+const rt = I.lerTextoExtrato(inter, { hoje: '2026-11-07', cartao: false }).linhas;
+eq('pdf inter data por extenso', rt.map((l) => l.data), ['2026-10-05', '2026-10-05']);
+eq('pdf inter sinais', rt.map((l) => l.valorCentavos), [-8990, 5000]);
+
+const dcPdf = ['15/10/2026 TARIFA PACOTE 39,90 D', '16/10/2026 TED RECEBIDA 1.000,00 C'];
+eq('pdf D/C', I.lerTextoExtrato(dcPdf, { hoje: '2026-11-07', cartao: false }).linhas.map((l) => l.valorCentavos), [-3990, 100000]);
+
+const fatura = ['12 OUT NETFLIX.COM 55,90', '13 OUT UBER *TRIP 23,40', '15 OUT PAGAMENTO RECEBIDO -1.200,00', '20 OUT LOJA X PARCELA 2/10 150,00'];
+eq('pdf fatura', I.lerTextoExtrato(fatura, { hoje: '2026-11-07', cartao: true }).linhas.map((l) => l.valorCentavos), [-5590, -2340, 120000, -15000]);
+
+eq('pdf ano anterior quando data ficaria no futuro', I.lerTextoExtrato(['20 DEZ COMPRA X 10,00'], { hoje: '2026-01-10', cartao: true }).linhas[0].data, '2025-12-20');
+eq('pdf sem data não vira linha', I.lerTextoExtrato(['COMPRA SEM DATA 10,00'], { hoje: '2026-11-07', cartao: false }).linhas.length, 0);
+
 console.log(`${ok} ok, ${falhas} falha(s)`);
 process.exit(falhas ? 1 : 0);

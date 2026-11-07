@@ -2,13 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { chaveDuplicado, decodificar, lerCsv, lerOfx, MAX_BYTES, normalizarSinalCartao, type LinhaImportada } from "@/lib/importacao";
+import { hojeISO } from "@/lib/datas";
+import { chaveDuplicado, decodificar, lerCsv, lerOfx, lerTextoExtrato, MAX_BYTES, MAX_BYTES_PDF, normalizarSinalCartao, type LinhaImportada } from "@/lib/importacao";
+import { linhasDoPdf, PdfComSenha, PdfSemTexto } from "@/lib/pdf";
 import { ehUuid, texto } from "@/lib/seguranca";
 import { requireUser } from "@/lib/supabase/server";
 import type { EstadoForm } from "@/lib/tipos";
 
 /**
- * Recebe um OFX/CSV, valida tamanho e formato, e põe as linhas na caixa de entrada (revisão obrigatória).
+ * Recebe um PDF, OFX ou CSV, valida tamanho e formato (assinatura do arquivo), e põe as linhas na caixa de entrada (revisão obrigatória).
  * O arquivo nunca é salvo: só o texto é lido em memória e descartado.
  */
 export async function importarArquivo(_: EstadoForm, fd: FormData): Promise<EstadoForm> {
@@ -23,26 +25,19 @@ export async function importarArquivo(_: EstadoForm, fd: FormData): Promise<Esta
 
   const arquivo = fd.get("arquivo");
   if (!(arquivo instanceof File) || arquivo.size === 0) return { erro: "Escolha o arquivo do extrato." };
-  if (arquivo.size > MAX_BYTES) return { erro: "Arquivo grande demais (máximo 2 MB). Exporte um período menor." };
-  const ext = arquivo.name.toLowerCase().match(/\.(ofx|qfx|csv|txt)$/)?.[1];
-  if (!ext) return { erro: "Formato não aceito. Use .ofx ou .csv exportado pelo banco." };
+  const ext = arquivo.name.toLowerCase().match(/\.(pdf|ofx|qfx|csv|txt)$/)?.[1];
+  if (!ext) return { erro: "Formato não aceito. Use o extrato em PDF, OFX ou CSV baixado do banco." };
+  if (arquivo.size > (ext === "pdf" ? MAX_BYTES_PDF : MAX_BYTES)) {
+    return { erro: `Arquivo grande demais (máximo ${ext === "pdf" ? 5 : 2} MB). Exporte um período menor.` };
+  }
 
   const bytes = new Uint8Array(await arquivo.arrayBuffer());
-  if (bytes.slice(0, 4).every((b, i) => b === [0x50, 0x4b, 0x03, 0x04][i]) || bytes.includes(0)) {
-    return { erro: "Esse arquivo não é texto (parece uma planilha .xlsx). Exporte em CSV ou OFX." };
-  }
-  const conteudo = decodificar(bytes);
-  const ehOfx = ext === "ofx" || ext === "qfx" || /<OFX>/i.test(conteudo.slice(0, 4000));
+  const ehPdf = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; // "%PDF"
+  if (ext === "pdf" && !ehPdf) return { erro: "Esse arquivo não é um PDF válido." };
 
-  let linhas: LinhaImportada[];
-  if (ehOfx) {
-    const r = lerOfx(conteudo);
-    linhas = r.linhas;
-  } else {
-    const r = lerCsv(conteudo);
-    if (r.erro) return { erro: r.erro };
-    linhas = destTipo === "cartao" ? normalizarSinalCartao(r.linhas) : r.linhas;
-  }
+  const lido = ehPdf ? await lerPdf(bytes, destTipo === "cartao") : lerTexto(bytes, ext, destTipo === "cartao");
+  if ("erro" in lido) return { erro: lido.erro };
+  let linhas = lido.linhas;
   if (linhas.length === 0) return { erro: "Não encontrei movimentações nesse arquivo." };
 
   // No cartão só entram compras (negativas). Créditos são pagamento de fatura ou estorno: ficam de fora.
@@ -75,4 +70,27 @@ export async function importarArquivo(_: EstadoForm, fd: FormData): Promise<Esta
   const novas = inseridas?.length ?? 0;
   revalidatePath("/", "layout");
   redirect(`/revisar?ok=arquivo&n=${novas}&d=${registros.length - novas}${creditosCartao ? `&c=${creditosCartao}` : ""}`);
+}
+
+type Lido = { linhas: LinhaImportada[] } | { erro: string };
+
+async function lerPdf(bytes: Uint8Array, cartao: boolean): Promise<Lido> {
+  try {
+    return lerTextoExtrato(await linhasDoPdf(bytes), { hoje: hojeISO(), cartao });
+  } catch (e) {
+    if (e instanceof PdfComSenha) return { erro: "Esse PDF tem senha. Abra no celular ou computador, use Imprimir → Salvar como PDF para gerar uma cópia sem senha e envie de novo." };
+    if (e instanceof PdfSemTexto) return { erro: "Esse PDF é uma imagem (foto ou escaneado) e não dá para ler o texto. Baixe o extrato digital no app do banco." };
+    return { erro: "Não consegui ler esse PDF. Tente baixar o extrato de novo ou use OFX/CSV." };
+  }
+}
+
+function lerTexto(bytes: Uint8Array, ext: string, cartao: boolean): Lido {
+  if (bytes.slice(0, 4).every((b, i) => b === [0x50, 0x4b, 0x03, 0x04][i]) || bytes.includes(0)) {
+    return { erro: "Esse arquivo não é texto (parece uma planilha .xlsx). Use o extrato em PDF, OFX ou CSV." };
+  }
+  const conteudo = decodificar(bytes);
+  if (ext === "ofx" || ext === "qfx" || /<OFX>/i.test(conteudo.slice(0, 4000))) return { linhas: lerOfx(conteudo).linhas };
+  const r = lerCsv(conteudo);
+  if (r.erro) return { erro: r.erro };
+  return { linhas: cartao ? normalizarSinalCartao(r.linhas) : r.linhas };
 }

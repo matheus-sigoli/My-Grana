@@ -27,8 +27,8 @@ export default async function ImportarPage() {
           <h2 className="font-display text-xl font-bold">Como funciona</h2>
           <ol className="mt-4 space-y-3 text-[15px]">
             {[
-              ["Leitura", "Lemos data, descrição e valor de cada movimentação. O arquivo não fica guardado."],
-              ["Revisão", "As linhas vão para Revisar importações, com a categoria sugerida pelo seu histórico."],
+              ["Leitura", "Lemos data, descrição e valor de cada movimentação do PDF, OFX ou CSV. O arquivo não fica guardado."],
+              ["Revisão", "As linhas vão para Revisar importações, com a categoria sugerida pelo seu histórico. No PDF, confira os valores: cada banco monta o arquivo de um jeito."],
               ["Sem duplicar", "Importou o mesmo extrato de novo? As linhas repetidas são ignoradas."],
               ["Fatura do cartão", "Compras viram despesas na fatura certa; pagamentos e estornos ficam de fora."],
             ].map(([t, d], i) => (
