@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+/* Tokens — ver DESIGN.md */
+/* Tokens — ver DESIGN.md. As cores reais ficam em variáveis, trocadas pelo tema. */
+@theme {
+  --font-sans: var(--font-corpo), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-titulo), ui-sans-serif, system-ui, sans-serif;
+
+  --color-fundo: var(--t-fundo);
+  --color-papel: var(--t-papel);
+  --color-tinta: var(--t-tinta);
+  --color-suave: var(--t-suave);
+  --color-linha: var(--t-linha);
+  --color-marca: var(--t-marca);
+  --color-marca-escura: var(--t-marca-escura);
+  --color-marca-clara: var(--t-marca-clara);
+  --color-acento: #f6c343;
+  --color-acento-escuro: #e9b22a;
+  --color-receita: var(--t-receita);
+  --color-despesa: var(--t-despesa);
+  --color-transf: var(--t-transf);
+  /* Bloco de destaque (saldo, nota, fatura): escuro nos dois temas, com texto branco. */
+  --color-destaque: var(--t-destaque);
+
+  --ease-saida: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Claro (padrão) */
+:root {
+  color-scheme: light;
+  --t-fundo: #f3f5f4;
+  --t-papel: #ffffff;
+  --t-tinta: #0f1b17;
+  --t-suave: #56635d;
+  --t-linha: #dce2df;
+  --t-marca: #0e4d3a;
+  --t-marca-escura: #0a3a2c;
+  --t-marca-clara: #e2eee9;
+  --t-receita: #17803d;
+  --t-despesa: #c2410c;
+  --t-transf: #4b5b55;
+  --t-destaque: #0f1b17;
+}
+
+/* Escuro: fundo verde-noite, superfícies um passo acima, textos claros; marca e números mais luminosos. */
+:root[data-tema="escuro"] {
+  color-scheme: dark;
+  --t-fundo: #0a1210;
+  --t-papel: #111c19;
+  --t-tinta: #e7eeea;
+  --t-suave: #9aaba3;
+  --t-linha: #22322d;
+  --t-marca: #6fd3ac;
+  --t-marca-escura: #8fe0c1;
+  --t-marca-clara: #163029;
+  --t-receita: #5fd48a;
+  --t-despesa: #ff8f5e;
+  --t-transf: #9fb0a9;
+  --t-destaque: #172722;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="claro"]) {
+    color-scheme: dark;
+    --t-fundo: #0a1210;
+    --t-papel: #111c19;
+    --t-tinta: #e7eeea;
+    --t-suave: #9aaba3;
+    --t-linha: #22322d;
+    --t-marca: #6fd3ac;
+    --t-marca-escura: #8fe0c1;
+    --t-marca-clara: #163029;
+    --t-receita: #5fd48a;
+    --t-despesa: #ff8f5e;
+    --t-transf: #9fb0a9;
+    --t-destaque: #172722;
+  }
+}
+html { background: var(--color-fundo); color: var(--color-tinta); -webkit-tap-highlight-color: transparent; }
+body { font-variant-numeric: tabular-nums; }
+::selection { background: var(--color-acento); color: #0f1b17; }
+
+:focus-visible { outline: 2px solid var(--color-marca); outline-offset: 2px; }
+
+button, a, input, select, textarea, label { touch-action: manipulation; }
+
+@layer components {
+  .campo {
+    @apply block w-full rounded-[10px] border border-linha bg-papel px-3 py-2.5 text-[15px] text-tinta
+      transition-[border-color,box-shadow] duration-150 placeholder:text-suave/70
+      hover:border-suave/40 focus:border-marca focus:outline-none focus:ring-3 focus:ring-marca/15
+      disabled:bg-fundo disabled:text-suave;
+  }
+  .rotulo { @apply mb-1.5 block text-[13px] font-semibold text-tinta; }
+  .dica { @apply mt-1.5 text-[13px] text-suave; }
+
+  /* Ação principal: amarelo-ipê com texto em tinta (única cor de ação do app) */
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-acento px-5 text-[15px] font-bold text-[#0f1b17]
+      transition-[background-color,transform] duration-150 hover:bg-acento-escuro active:scale-[0.98]
+      disabled:cursor-progress disabled:opacity-70;
+  }
+  .btn-sec {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-linha bg-papel px-4 text-[15px]
+      font-semibold text-tinta transition-[border-color,background-color,transform] duration-150
+      hover:border-tinta/30 active:scale-[0.98];
+  }
+  .btn-perigo {
+    @apply inline-flex min-h-11 items-center justify-center rounded-full px-4 text-[15px] font-semibold text-despesa
+      transition-colors duration-150 hover:bg-despesa/10;
+  }
+  .painel { @apply rounded-2xl border border-linha bg-papel p-5 sm:p-6; }
+  .link { @apply font-semibold text-marca underline-offset-4 hover:underline; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* Impressão / "Salvar como PDF": só o conteúdo, sempre em tema claro. */
+@media print {
+  :root, :root[data-tema="escuro"], :root:not([data-tema="claro"]) {
+    --t-fundo: #ffffff; --t-papel: #ffffff; --t-tinta: #0f1b17; --t-suave: #56635d; --t-linha: #dce2df;
+    --t-marca: #0e4d3a; --t-marca-escura: #0a3a2c; --t-marca-clara: #e2eee9; --t-receita: #17803d;
+    --t-despesa: #c2410c; --t-transf: #4b5b55; --t-destaque: #0f1b17;
+    color-scheme: light;
+  }
+  aside, header, nav, .no-print { display: none !important; }
+  main { max-width: none !important; padding: 0 !important; }
+  .painel { break-inside: avoid; }
+  * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
