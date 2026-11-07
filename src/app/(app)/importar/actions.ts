@@ -57,19 +57,42 @@ export async function importarArquivo(_: EstadoForm, fd: FormData): Promise<Esta
       data: l.data,
       descricao: l.descricao || "Sem descrição",
       valor_centavos: l.valorCentavos,
+      recebedor: l.recebedor ?? null,
     };
   });
 
-  // Duplicados (mesmo arquivo importado de novo) são ignorados pela chave única.
-  const { data: inseridas, error } = await supabase
-    .from("transacoes_importadas")
-    .upsert(registros, { onConflict: "user_id,pluggy_transaction_id", ignoreDuplicates: true })
-    .select("id");
-  if (error) return { erro: "Não foi possível ler esse extrato. Confira se é o arquivo exportado pelo banco." };
+  // Linhas já importadas (mesma chave): não duplica; só completa o recebedor que faltava (ADR-0012).
+  type Existente = { id: string; pluggy_transaction_id: string; recebedor: string | null; descricao: string; lancamento_id: string | null };
+  const existentes = new Map<string, Existente>();
+  for (let i = 0; i < registros.length; i += 150) {
+    const chaves = registros.slice(i, i + 150).map((r) => r.pluggy_transaction_id);
+    const { data } = await supabase.from("transacoes_importadas").select("id,pluggy_transaction_id,recebedor,descricao,lancamento_id").in("pluggy_transaction_id", chaves);
+    for (const e of (data ?? []) as Existente[]) existentes.set(e.pluggy_transaction_id, e);
+  }
+  const novos = registros.filter((r) => !existentes.has(r.pluggy_transaction_id));
+  for (let i = 0; i < novos.length; i += 500) {
+    const { error } = await supabase.from("transacoes_importadas")
+      .upsert(novos.slice(i, i + 500), { onConflict: "user_id,pluggy_transaction_id", ignoreDuplicates: true });
+    if (error) return { erro: "Não foi possível ler esse extrato. Confira se é o arquivo exportado pelo banco." };
+  }
+  const completar = registros
+    .map((r) => ({ r, e: existentes.get(r.pluggy_transaction_id) }))
+    .filter((x): x is { r: (typeof registros)[number]; e: Existente } => !!x.e && !x.e.recebedor && !!x.r.recebedor);
+  for (let i = 0; i < completar.length; i += 20) {
+    await Promise.all(completar.slice(i, i + 20).map(async ({ r, e }) => {
+      await supabase.from("transacoes_importadas").update({ recebedor: r.recebedor }).eq("id", e.id);
+      // O lançamento que veio dessa linha ganha o nome, se a descrição dele ainda é a do banco.
+      if (e.lancamento_id) {
+        await supabase.from("lancamentos").update({ descricao: `${e.descricao} · ${r.recebedor}`.slice(0, 120) })
+          .eq("id", e.lancamento_id).eq("descricao", e.descricao);
+      }
+    }));
+  }
+  const nomes = completar.length;
 
-  const novas = inseridas?.length ?? 0;
+  const novas = novos.length;
   revalidatePath("/", "layout");
-  redirect(`/revisar?ok=arquivo&n=${novas}&d=${registros.length - novas}${creditosCartao ? `&c=${creditosCartao}` : ""}`);
+  redirect(`/revisar?ok=arquivo&n=${novas}&d=${registros.length - novas}${creditosCartao ? `&c=${creditosCartao}` : ""}${nomes ? `&r=${nomes}` : ""}`);
 }
 
 type Lido = { linhas: LinhaImportada[] } | { erro: string };

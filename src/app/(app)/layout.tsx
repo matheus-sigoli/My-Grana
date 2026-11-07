@@ -34,6 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const dados: Atalho[] = [
     { href: "/importar", rotulo: "Importar extrato", icone: ICONES.importar },
     { href: "/revisar", rotulo: "Revisar importações", icone: ICONES.revisar, contador: count ?? 0 },
+    { href: "/recebedores", rotulo: "Recebedores", icone: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM17 11l2 2 4-4" },
     ...(openFinance ? [{ href: "/conexoes", rotulo: "Open Finance", icone: ICONES.openFinance }] : []),
   ];
   const atalhosCelular: Atalho[] = [

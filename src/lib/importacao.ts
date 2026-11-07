@@ -9,6 +9,7 @@ export type LinhaImportada = {
   descricao: string;
   valorCentavos: number; // negativo = saída
   idExterno: string | null; // FITID do OFX ou "Identificador" do CSV
+  recebedor?: string | null; // quem recebeu/mandou (ADR-0012): "DES:"/"REM:" no PDF, NAME no OFX
 };
 
 export const MAX_BYTES = 2 * 1024 * 1024;
@@ -65,9 +66,12 @@ export function lerOfx(texto: string): { linhas: LinhaImportada[]; cartao: boole
   for (const b of blocos) {
     const data = dataParaIso(campo(b, "DTPOSTED"));
     const valor = valorParaCentavos(campo(b, "TRNAMT"));
-    const descricao = limparTexto(campo(b, "MEMO") || campo(b, "NAME") || "Sem descrição");
+    const memo = campo(b, "MEMO"), nome = campo(b, "NAME");
+    const descricao = limparTexto(memo || nome || "Sem descrição");
     if (!data || valor === null || valor === 0) continue;
-    linhas.push({ data, descricao, valorCentavos: valor, idExterno: campo(b, "FITID").slice(0, 120) || null });
+    // Descrição continua igual (chave de duplicado estável); NAME vira o recebedor quando difere do MEMO.
+    const recebedor = memo && nome && limparTexto(nome) !== descricao ? limparTexto(nome).slice(0, 120) : null;
+    linhas.push({ data, descricao, valorCentavos: valor, idExterno: campo(b, "FITID").slice(0, 120) || null, recebedor });
   }
   return { linhas, cartao };
 }
@@ -135,9 +139,13 @@ const RE_DATA_NUM = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?(?![\d,])/;
 const RE_DATA_MES = /^(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*\.?(?:\s*(?:de\s+)?(\d{4}))?(?![a-z])/;
 // valor brasileiro: "-1.234,56", "R$ 50,00", "- R$ 12,90", "45,00 D", "(12,00)"
 const RE_VALOR = /(\()?(?:([-−])\s*)?(?:R\$\s*)?(?:([-−])\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})(\))?(?:\s*([DC])(?![a-zA-Z]))?/g;
-const RE_IGNORAR = /\b(saldo|total|limite|resumo|vencimento|p[aá]gina|per[ií]odo|ag[eê]ncia|cpf|cnpj)\b/i;
+const RE_IGNORAR = /\b(saldo|total|limite|resumo|p[aá]gina|per[ií]odo|ag[eê]ncia|cpf|cnpj)\b/i;
+// Linha de complemento com o nome: "DES: FULANO DE TAL 03/11" (Bradesco), "REM: …", "FAVORECIDO: …"
+const RE_RECEBEDOR = /^(?:des|rem|dest|fav|favorecido|pagador|remetente|destinat[aá]rio|origem|destino)\s*[:.]\s*(.+?)(?:\s+\d{2}\/\d{2}(?:\/\d{2,4})?)?$/i;
 const RE_NEG = /(compra|pagamento|pagto|pix enviado|enviad[oa]|d[eé]bito|saque|tarifa|boleto|iof|juros|anuidade|aplica[cç][aã]o|parcela)/i;
-const RE_POS = /(recebid|dep[oó]sito|cr[eé]dito|estorno|rendimento|\brend\b|resgate|sal[aá]rio|reembolso|devolu[cç][aã]o)/i;
+// Saída mesmo com "crédito" no texto: pagamento/gasto de cartão de crédito, compra no crédito.
+const RE_NEG_FORTE = /(gastos? (com )?cart[aã]o|pag(to|amento)?\.? (de |da )?fatura|fatura (do |de )?cart[aã]o|compra)/i;
+const RE_POS = /(recebid|dep[oó]sito|cr[eé]dito|estorno|rendimento|\brend\b|resgate|sal[aá]rio|vencimento funcionario|\bfolha\b|reembolso|devolu[cç][aã]o)/i;
 const RE_CREDITO_CARTAO = /(pagamento|estorno|cr[eé]dito|desconto|devolu[cç][aã]o)/i;
 
 /**
@@ -178,6 +186,12 @@ export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao
       if (d) { dataAtual = d; resto = linha.slice(mMes[0].length); }
     }
 
+    const mRec = linha.match(RE_RECEBEDOR);
+    if (mRec && out.length && ![...linha.matchAll(RE_VALOR)].length) {
+      const ultima = out[out.length - 1];
+      if (!ultima.recebedor) ultima.recebedor = limparTexto(mRec[1]).slice(0, 120) || null;
+      continue;
+    }
     if (RE_IGNORAR.test(baixa)) continue;
     const valores = [...resto.matchAll(RE_VALOR)];
     if (!valores.length || !dataAtual) continue;
@@ -196,11 +210,12 @@ export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao
     if (e.cartao) sinal = negativo || RE_CREDITO_CARTAO.test(descricao) ? 1 : -1;
     else if (negativo) sinal = -1;
     else if (positivoExplicito) sinal = 1;
+    else if (RE_NEG_FORTE.test(descricao)) sinal = -1;
     else if (RE_POS.test(descricao)) sinal = 1;
     else if (RE_NEG.test(descricao)) sinal = -1;
     else sinal = contexto || -1;
 
-    out.push({ data: dataAtual, descricao, valorCentavos: sinal * Math.abs(centavos), idExterno: null });
+    out.push({ data: dataAtual, descricao, valorCentavos: sinal * Math.abs(centavos), idExterno: null, recebedor: null });
     if (out.length >= MAX_LINHAS) break;
   }
   return { linhas: out };

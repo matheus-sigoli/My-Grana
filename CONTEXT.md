@@ -81,6 +81,12 @@ App web de controle financeiro pessoal com dashboard. Multiusuário: cada **Usu�
 
 **Caixa de entrada** — onde chegam as **Transações importadas** do banco. Nada vira Lançamento sem passar por ela: o usuário confere a categoria sugerida, importa ou ignora. Se a transação bater com uma Ocorrência prevista, a caixa sugere confirmá-la.
 
+**Recebedor** — quem recebeu ou mandou o dinheiro numa Transação importada (ex.: "FULANO DE TAL" na linha "DES:"/"REM:" do extrato Bradesco, ou o campo NAME do OFX). Fica separado da descrição, que continua sendo o texto do banco ("PIX ENVIADO").
+
+**Regra de recebedor** — o que o MyGrana aprendeu sobre um Recebedor: "Pix para Fulano = Aluguel" (Categoria) ou "= conta fixa Aluguel" (Recorrência). Nasce e muda sozinha quando o usuário importa uma linha com aquele Recebedor (vale a última escolha); só **preenche a revisão**, nunca importa sozinha. Tela: Recebedores. ([ADR-0012](docs/adr/0012-recebedor-e-pagamento-de-fatura-importado.md))
+
+**Pagamento de fatura reconhecido** — linha do extrato da conta que paga a fatura ("GASTOS CARTAO DE CREDITO", "PAGTO FATURA"…). Vira Pagamento de fatura do Cartão pago por aquela Conta, na Fatura cujo vencimento está mais perto da data (até 10 dias); nunca vira Despesa, porque as compras já estão no cartão.
+
 ### Importação
 
 **Importação** — envio de um arquivo de extrato (OFX ou CSV) de uma Conta ou Fatura de cartão. Passa por uma **tela de revisão** antes de virar Lançamentos.

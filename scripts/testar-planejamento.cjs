@@ -20,6 +20,7 @@ const I = carregar('importacao');
 const D = carregar('deteccao');
 const A = carregar('avisos');
 const R = carregar('relatorio');
+const F = carregar('fatura-importada');
 
 let ok = 0, falhas = 0;
 const eq = (n, a, b) => { if (JSON.stringify(a) === JSON.stringify(b)) ok++; else { falhas++; console.log('FALHOU', n, JSON.stringify(a), '≠', JSON.stringify(b)); } };
@@ -105,7 +106,7 @@ const ofx = `OFXHEADER:100
 </BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`;
 const o = I.lerOfx(ofx);
 eq('ofx linhas (ignora zero)', o.linhas.length, 2);
-eq('ofx 1', o.linhas[0], { data: '2026-11-03', descricao: 'PADARIA DO ZE', valorCentavos: -4590, idExterno: 'abc1' });
+eq('ofx 1', o.linhas[0], { data: '2026-11-03', descricao: 'PADARIA DO ZE', valorCentavos: -4590, idExterno: 'abc1', recebedor: null });
 eq('ofx 2 (fechamento xml)', o.linhas[1].descricao, 'SALARIO');
 eq('ofx conta, não cartão', o.cartao, false);
 eq('ofx cartão', I.lerOfx('<OFX><CREDITCARDMSGSRSV1><STMTTRN><DTPOSTED>20261101<TRNAMT>-10<FITID>1<MEMO>X').cartao, true);
@@ -244,6 +245,41 @@ eq('pdf fatura', I.lerTextoExtrato(fatura, { hoje: '2026-11-07', cartao: true })
 
 eq('pdf ano anterior quando data ficaria no futuro', I.lerTextoExtrato(['20 DEZ COMPRA X 10,00'], { hoje: '2026-01-10', cartao: true }).linhas[0].data, '2025-12-20');
 eq('pdf sem data não vira linha', I.lerTextoExtrato(['COMPRA SEM DATA 10,00'], { hoje: '2026-11-07', cartao: false }).linhas.length, 0);
+
+// RECEBEDOR E PAGAMENTO DE FATURA (ADR-0012)
+const brad = [
+  '03/11/2026 PIX ENVIADO -50,00 1.234,56',
+  'DES: FULANO DE TAL 03/11',
+  'PIX RECEBIDO 40,00 1.274,56',
+  'REM: EMPRESA XYZ LTDA 03/11',
+  'GASTOS CARTAO DE CREDITO -394,03 880,53',
+  '29/10/2026 VENCIMENTO FUNCIONARIO 5.180,56 6.061,09',
+];
+const rb = I.lerTextoExtrato(brad, { hoje: '2026-11-07', cartao: false }).linhas;
+eq('bradesco: 4 linhas (salário "VENCIMENTO" não é mais ignorado)', rb.length, 4);
+eq('bradesco: recebedor DES', [rb[0].descricao, rb[0].recebedor], ['PIX ENVIADO', 'FULANO DE TAL']);
+eq('bradesco: recebedor REM', [rb[1].valorCentavos, rb[1].recebedor], [4000, 'EMPRESA XYZ LTDA']);
+eq('bradesco: cartão sem recebedor', rb[2].recebedor, null);
+eq('bradesco: salário', [rb[3].data, rb[3].valorCentavos], ['2026-10-29', 518056]);
+eq('ofx NAME vira recebedor', I.lerOfx('<STMTTRN><DTPOSTED>20261103<TRNAMT>-50.00<FITID>x<NAME>FULANO DE TAL<MEMO>PIX ENVIADO').linhas[0].recebedor, 'FULANO DE TAL');
+eq('chave estável com recebedor', I.chaveDuplicado('k', { data: '2026-11-03', descricao: 'PIX ENVIADO', valorCentavos: -5000, idExterno: null, recebedor: 'FULANO' }), I.chaveDuplicado('k', { data: '2026-11-03', descricao: 'PIX ENVIADO', valorCentavos: -5000, idExterno: null }));
+
+eq('pagamento de fatura: bradesco', F.ehPagamentoFatura('GASTOS CARTAO DE CREDITO', -39403), true);
+eq('pagamento de fatura: pagto fatura', F.ehPagamentoFatura('PAGTO FATURA NUBANK', -1000), true);
+eq('pagamento de fatura: pagamento cartão', F.ehPagamentoFatura('Pagamento cartão de crédito', -1000), true);
+eq('não é fatura: boleto', F.ehPagamentoFatura('PAGTO ELETRON COBRANCA', -1000), false);
+eq('não é fatura: entrada', F.ehPagamentoFatura('GASTOS CARTAO DE CREDITO', 1000), false);
+const visa = { id: 'v', nome: 'VISA', dia_fechamento: 17, dia_vencimento: 3, conta_pagamento_id: 'brad', arquivado: false };
+const outro = { id: 'o', nome: 'Outro', dia_fechamento: 1, dia_vencimento: 10, conta_pagamento_id: 'nu', arquivado: false };
+const cf = F.faturasCandidatas({ contaId: 'brad', data: '2026-11-03', valorCentavos: -39403 }, [visa, outro]);
+eq('fatura: só cartões pagos pela conta', cf.map((c) => c.cartaoId), ['v']);
+eq('fatura: novembro (vence 03/11)', [cf[0].fatura, cf[0].dias], ['2026-11-01', 0]);
+eq('fatura: pagamento atrasado em 05/10 → outubro', F.faturasCandidatas({ contaId: 'brad', data: '2026-10-05', valorCentavos: -1 }, [visa])[0].fatura, '2026-10-01');
+eq('fatura: sem cartão da conta usa todos', F.faturasCandidatas({ contaId: 'x', data: '2026-11-09', valorCentavos: -1 }, [visa, outro])[0].cartaoId, 'o');
+eq('fatura: fora da janela', F.faturasCandidatas({ contaId: 'brad', data: '2026-11-20', valorCentavos: -1 }, [visa]).length, 0);
+eq('fatura sem sinal continua saída', I.lerTextoExtrato(['03/11/2026 GASTOS CARTAO DE CREDITO 394,03'], { hoje: '2026-11-07', cartao: false }).linhas[0].valorCentavos, -39403);
+eq('TED crédito sem sinal é entrada', I.lerTextoExtrato(['03/11/2026 TED CREDITO EMPRESA 100,00'], { hoje: '2026-11-07', cartao: false }).linhas[0].valorCentavos, 10000);
+eq('chave recebedor', F.chaveRecebedor('Fulano  de Tal *** 123.456.789-00'), 'fulano de tal');
 
 console.log(`${ok} ok, ${falhas} falha(s)`);
 process.exit(falhas ? 1 : 0);

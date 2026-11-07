@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 const TABELAS = [
   "contas", "categorias", "lancamentos", "cartoes", "pagamentos_fatura", "recorrencias", "ocorrencias_tratadas",
   "ativos", "operacoes_investimento", "avaliacoes", "proventos", "alocacao_alvo", "orcamentos", "metas",
-  "conexoes_bancarias", "contas_externas", "transacoes_importadas", "preferencias",
+  "conexoes_bancarias", "contas_externas", "transacoes_importadas", "regras_recebedor", "preferencias",
 ] as const;
 
 /** Portabilidade (LGPD): todos os dados do usuário logado em JSON. Só leitura; a RLS limita ao próprio usuário. */
