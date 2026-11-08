@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { ehBloco, type Bloco } from "@/lib/blocos";
 import { excluirItemPluggy, pluggyConfigurado } from "@/lib/openfinance/pluggy";
 import { texto } from "@/lib/seguranca";
-import { adminConfigurado, createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/server";
 import type { EstadoForm } from "@/lib/tipos";
 
@@ -18,30 +17,43 @@ export async function salvarPainel(fd: FormData) {
   redirect("/configuracoes?ok=painel");
 }
 
+/** Mensagem amigável para o erro vindo das funções do banco. */
+function erroDoBanco(msg: string | undefined, acao: string): string {
+  if (msg?.includes("login_antigo")) return `Por segurança, saia e entre de novo antes de ${acao}.`;
+  if (msg?.includes("autenticador")) return "Confirme o código do autenticador (2FA) e tente de novo.";
+  return "Não foi possível concluir agora. Tente de novo em instantes.";
+}
+
+async function desconectarBancos(supabase: Awaited<ReturnType<typeof requireUser>>["supabase"]) {
+  if (!pluggyConfigurado()) return;
+  const { data: conexoes } = await supabase.from("conexoes_bancarias").select("pluggy_item_id");
+  await Promise.all((conexoes ?? []).map((c) => excluirItemPluggy(c.pluggy_item_id as string).catch(() => undefined)));
+}
+
 /**
- * Exclui a conta: apaga as conexões bancárias na Pluggy, todos os dados (função no banco, exige 2FA se ativo)
- * e o usuário do Auth (chave de serviço, só aqui). Pede para digitar EXCLUIR.
+ * Apaga todas as informações (contas, lançamentos, cartões, investimentos, metas, importações…) e mantém o login.
+ * As categorias padrão voltam. O banco confere 2FA e login recente (12 h). Pede para digitar APAGAR.
+ */
+export async function apagarDados(_: EstadoForm, fd: FormData): Promise<EstadoForm> {
+  const { supabase } = await requireUser();
+  if (texto(fd, "confirmacao", 20).toUpperCase() !== "APAGAR") return { erro: "Digite APAGAR para confirmar." };
+  await desconectarBancos(supabase);
+  const { error } = await supabase.rpc("apagar_meus_dados");
+  if (error) return { erro: erroDoBanco(error.message, "apagar seus dados") };
+  revalidatePath("/", "layout");
+  redirect("/configuracoes?ok=dados");
+}
+
+/**
+ * Exclui a conta: desconecta os bancos na Pluggy e chama excluir_minha_conta() no banco, que apaga os dados e o login
+ * do próprio usuário (2FA e login recente conferidos lá). Não depende da chave de serviço. Pede para digitar EXCLUIR.
  */
 export async function excluirConta(_: EstadoForm, fd: FormData): Promise<EstadoForm> {
-  const { supabase, user } = await requireUser();
+  const { supabase } = await requireUser();
   if (texto(fd, "confirmacao", 20).toUpperCase() !== "EXCLUIR") return { erro: "Digite EXCLUIR para confirmar." };
-  if (!adminConfigurado()) return { erro: "A exclusão de conta está indisponível no momento. Fale com o suporte." };
-  // Reautenticação: só com login recente (protege contra sessão esquecida aberta em outro aparelho).
-  const ultimoLogin = Date.parse(user.last_sign_in_at ?? "");
-  if (!Number.isFinite(ultimoLogin) || Date.now() - ultimoLogin > 12 * 60 * 60 * 1000) {
-    return { erro: "Por segurança, saia e entre de novo antes de excluir a conta." };
-  }
-
-  if (pluggyConfigurado()) {
-    const { data: conexoes } = await supabase.from("conexoes_bancarias").select("pluggy_item_id");
-    await Promise.all((conexoes ?? []).map((c) => excluirItemPluggy(c.pluggy_item_id as string).catch(() => undefined)));
-  }
-  const { error } = await supabase.rpc("apagar_meus_dados");
-  if (error) return { erro: "Não foi possível apagar seus dados agora. Tente de novo." };
-
-  const admin = createAdminClient();
-  const { error: e2 } = await admin.auth.admin.deleteUser(user.id);
-  if (e2) return { erro: "Seus dados foram apagados, mas o login não pôde ser removido. Tente de novo." };
-  await supabase.auth.signOut();
+  await desconectarBancos(supabase);
+  const { error } = await supabase.rpc("excluir_minha_conta");
+  if (error) return { erro: erroDoBanco(error.message, "excluir a conta") };
+  await supabase.auth.signOut().catch(() => undefined);
   redirect("/login?conta=excluida");
 }

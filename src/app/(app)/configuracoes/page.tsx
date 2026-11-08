@@ -35,6 +35,7 @@ export default async function ConfiguracoesPage({ searchParams }: { searchParams
     <>
       <Titulo sub={user.email}>Configurações</Titulo>
       {sp.ok === "painel" && <p role="status" className="mb-6 rounded-2xl bg-marca-clara px-4 py-3 font-semibold text-marca">Painel atualizado.</p>}
+      {sp.ok === "dados" && <p role="status" className="mb-6 rounded-2xl bg-marca-clara px-4 py-3 font-semibold text-marca">Suas informações foram apagadas. As categorias padrão estão de volta — pode começar do zero.</p>}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
@@ -69,7 +70,6 @@ export default async function ConfiguracoesPage({ searchParams }: { searchParams
             <p className="mb-3 text-[15px] text-suave">Baixe tudo o que você guardou aqui, num arquivo JSON.</p>
             <a href="/api/exportar" className="btn-sec" download>Exportar meus dados</a>
             <div className="mt-6 border-t border-linha pt-5">
-              <h3 className="mb-2 font-semibold text-despesa">Excluir conta</h3>
               <ExcluirConta />
             </div>
           </Secao>

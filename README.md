@@ -35,7 +35,7 @@ Migração em `supabase/migrations/`. Toda tabela tem RLS (`user_id = auth.uid()
 O projeto já tem `vercel.json` (região São Paulo, cron diário dos avisos às 8h).
 
 1. Importe o repositório na Vercel (ou `npx vercel` na pasta).
-2. Variáveis de ambiente — veja `.env.example`. Obrigatórias: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SITE_URL`. Opcionais (cada uma liga um recurso): `SUPABASE_SERVICE_ROLE_KEY` (excluir conta e push), `ANTHROPIC_API_KEY` (assistente), `NEXT_PUBLIC_VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` + `VAPID_SUBJECT` (push), `CRON_SECRET`, `BRAPI_TOKEN`, `PLUGGY_CLIENT_ID` + `PLUGGY_CLIENT_SECRET`.
+2. Variáveis de ambiente — veja `.env.example`. Obrigatórias: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SITE_URL`. Opcionais (cada uma liga um recurso): `SUPABASE_SERVICE_ROLE_KEY` (push diário), `ANTHROPIC_API_KEY` (assistente), `NEXT_PUBLIC_VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` + `VAPID_SUBJECT` (push), `CRON_SECRET`, `BRAPI_TOKEN`, `PLUGGY_CLIENT_ID` + `PLUGGY_CLIENT_SECRET`.
 3. No Supabase → Authentication → URL Configuration, troque o *Site URL* pelo domínio da Vercel e adicione `https://SEU-DOMINIO/auth/confirm` nas *Redirect URLs*.
 
 Sem uma variável opcional, o recurso correspondente some da interface (nada de mensagem técnica para o cliente).
