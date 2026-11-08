@@ -153,16 +153,21 @@ const RE_CREDITO_CARTAO = /(pagamento|estorno|cr[eé]dito|desconto|devolu[cç][a
  * (Nubank, Itaú, Inter, Bradesco, C6…): data no começo da linha ou como título do dia, descrição e valor;
  * o último valor da linha costuma ser o saldo e é ignorado. Tudo vai para a revisão antes de virar lançamento.
  */
-export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao: boolean }): { linhas: LinhaImportada[] } {
-  const texto = linhasTexto.join("\n");
-  const anos = [...texto.matchAll(/\b\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})\b|\b(20\d{2})\b/g)].map((m) => Number(m[1] ?? m[2])).filter((a) => a <= Number(e.hoje.slice(0, 4)) + 1);
-  const anoBase = anos.length ? Math.max(...anos) : Number(e.hoje.slice(0, 4));
-  const montarData = (dia: number, mes: number, ano?: number) => {
+/** Monta datas "dd/mm" sem ano usando o ano mais recente que aparece no extrato (nunca no futuro). */
+function montadorDeData(texto: string, hoje: string) {
+  const anos = [...texto.matchAll(/\b\d{1,2}[/.-]\d{1,2}[/.-](20\d{2})\b|\b(20\d{2})\b/g)].map((m) => Number(m[1] ?? m[2])).filter((a) => a <= Number(hoje.slice(0, 4)) + 1);
+  const anoBase = anos.length ? Math.max(...anos) : Number(hoje.slice(0, 4));
+  return (dia: number, mes: number, ano?: number) => {
     const comAno = (a: number) => `${a}-${String(mes).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
     if (ano) return dataParaIso(comAno(ano < 100 ? 2000 + ano : ano));
     const iso = dataParaIso(comAno(anoBase));
-    return iso && iso > e.hoje ? dataParaIso(comAno(anoBase - 1)) : iso;
+    return iso && iso > hoje ? dataParaIso(comAno(anoBase - 1)) : iso;
   };
+}
+
+export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao: boolean }): { linhas: LinhaImportada[] } {
+  const montarData = montadorDeData(linhasTexto.join("\n"), e.hoje);
+  let saldoAnterior: number | null = null; // quando a linha traz o saldo, ele decide o sinal (entrou ou saiu)
 
   let dataAtual: string | null = null;
   let contexto = 0; // +1 entradas, -1 saídas (títulos de seção)
@@ -192,7 +197,15 @@ export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao
       if (!ultima.recebedor) ultima.recebedor = limparTexto(mRec[1]).slice(0, 120) || null;
       continue;
     }
-    if (RE_IGNORAR.test(baixa)) continue;
+    if (RE_IGNORAR.test(baixa)) {
+      // "Saldo anterior 1.234,56": vira a referência para conferir as próximas linhas.
+      const vs = /\bsaldo\b/.test(baixa) && !e.cartao ? [...resto.matchAll(RE_VALOR)] : [];
+      if (vs.length) {
+        const u = vs[vs.length - 1], c = valorParaCentavos(u[4]);
+        if (c !== null) saldoAnterior = u[2] || u[3] || u[6] === "D" ? -Math.abs(c) : Math.abs(c);
+      }
+      continue;
+    }
     const valores = [...resto.matchAll(RE_VALOR)];
     if (!valores.length || !dataAtual) continue;
 
@@ -215,10 +228,144 @@ export function lerTextoExtrato(linhasTexto: string[], e: { hoje: string; cartao
     else if (RE_NEG.test(descricao)) sinal = -1;
     else sinal = contexto || -1;
 
+    // Saldo ao lado: se a diferença para o saldo anterior é exatamente o valor, ela diz se entrou ou saiu.
+    if (valores.length >= 2 && !e.cartao) {
+      const ultimo = valores[valores.length - 1];
+      const saldo = valorParaCentavos(ultimo[4]);
+      if (saldo !== null) {
+        const saldoComSinal = ultimo[2] || ultimo[3] || ultimo[6] === "D" ? -Math.abs(saldo) : Math.abs(saldo);
+        if (saldoAnterior !== null && Math.abs(saldoComSinal - saldoAnterior) === Math.abs(centavos)) sinal = Math.sign(saldoComSinal - saldoAnterior);
+        saldoAnterior = saldoComSinal;
+      }
+    }
+
     out.push({ data: dataAtual, descricao, valorCentavos: sinal * Math.abs(centavos), idExterno: null, recebedor: null });
     if (out.length >= MAX_LINHAS) break;
   }
   return { linhas: out };
+}
+
+/** Pedaço de texto do PDF com posição (pontos; y cresce para cima). */
+export type ItemPdf = { x: number; fim: number; y: number; s: string };
+
+const RE_SO_VALOR = /^(\()?([-−])?\s*(?:R\$\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})(\))?\s*([-−]|[DC])?$/;
+const RE_SO_DATA = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/;
+const RE_LINHA_DE_SALDO = /^(total|saldo|s\s*a\s*l\s*d\s*o)\b/i;
+type Coluna = "credito" | "debito" | "saldo";
+
+function valorDoItem(s: string): number | null {
+  const m = s.trim().match(RE_SO_VALOR);
+  if (!m) return null;
+  const c = valorParaCentavos(m[3]);
+  if (c === null) return null;
+  return m[2] || (m[1] && m[4]) || m[5] === "-" || m[5] === "−" || m[5] === "D" ? -Math.abs(c) : Math.abs(c);
+}
+
+/**
+ * Extrato em PDF com colunas "Crédito" e "Débito" (Bradesco, Itaú, Santander, Caixa…). A coluna onde o valor está
+ * define se entrou (+) ou saiu (−), sem adivinhar pela descrição; o saldo ao lado confere cada linha.
+ * Histórico em cima e complemento ("DES: …", nome) embaixo da linha do valor são juntados a ela.
+ * Devolve null se o PDF não tiver esse cabeçalho (aí vale a leitura por texto).
+ */
+export function lerTabelaExtrato(paginas: ItemPdf[][], e: { hoje: string }): { linhas: LinhaImportada[]; conferidas: number; divergentes: number } | null {
+  const montarData = montadorDeData(paginas.flat().map((i) => i.s).join("\n"), e.hoje);
+  let colunas: { nome: Coluna; x: number; fim: number }[] | null = null;
+  let achouCabecalho = false;
+  let dataAtual: string | null = null;
+  let saldoAnterior: number | null = null;
+  let conferidas = 0, divergentes = 0;
+  const out: LinhaImportada[] = [];
+
+  for (const itens of paginas) {
+    // Cabeçalho: "Crédito" e "Débito" na mesma altura (o "Saldo", se houver, também).
+    let topo = Infinity;
+    const cred = itens.find((i) => /^cr[eé]dito/i.test(i.s.trim()));
+    const deb = cred && itens.find((i) => /^d[eé]bito/i.test(i.s.trim()) && Math.abs(i.y - cred.y) <= 3);
+    if (cred && deb) {
+      const sal = itens.find((i) => /^saldo/i.test(i.s.trim()) && Math.abs(i.y - cred.y) <= 3);
+      colunas = [{ nome: "credito", x: cred.x, fim: cred.fim }, { nome: "debito", x: deb.x, fim: deb.fim }];
+      if (sal) colunas.push({ nome: "saldo", x: sal.x, fim: sal.fim });
+      topo = cred.y - 2;
+      achouCabecalho = true;
+    }
+    if (!colunas) continue;
+    const cols = colunas;
+    const inicioValores = Math.min(...cols.map((c) => c.x)) - 25;
+    const colunaDe = (i: ItemPdf) => {
+      const meio = (i.x + i.fim) / 2;
+      let melhor = cols[0], dist = Infinity;
+      for (const c of cols) {
+        const d = Math.min(Math.abs(i.fim - c.fim), Math.abs(i.x - c.x), Math.abs(meio - (c.x + c.fim) / 2));
+        if (d < dist) { dist = d; melhor = c; }
+      }
+      return melhor.nome;
+    };
+
+    // Linhas = alturas onde há valores nas colunas de dinheiro.
+    const abaixo = itens.filter((i) => i.y < topo && i.s.trim());
+    type Linha = { y: number; credito: number | null; debito: number | null; saldo: number | null; textos: ItemPdf[] };
+    const linhas: Linha[] = [];
+    const resto: ItemPdf[] = [];
+    for (const i of abaixo) {
+      const v = i.x >= inicioValores ? valorDoItem(i.s) : null;
+      if (v === null) { resto.push(i); continue; }
+      let l = linhas.find((x) => Math.abs(x.y - i.y) <= 2.5);
+      if (!l) { l = { y: i.y, credito: null, debito: null, saldo: null, textos: [] }; linhas.push(l); }
+      l[colunaDe(i)] = v;
+    }
+    if (!linhas.length) continue;
+    // Cada texto vai para a linha de valor mais próxima na vertical (histórico em cima, complemento embaixo).
+    for (const t of resto) {
+      let melhor: Linha | null = null, dist = 13;
+      for (const l of linhas) { const d = Math.abs(l.y - t.y); if (d < dist) { dist = d; melhor = l; } }
+      melhor?.textos.push(t);
+    }
+
+    for (const l of linhas.sort((a, b) => b.y - a.y)) {
+      const textos = l.textos.sort((a, b) => b.y - a.y || a.x - b.x);
+      let data: string | null = null;
+      const acima: string[] = [], mesma: string[] = [], embaixo: string[] = [];
+      for (const t of textos) {
+        const s = t.s.replace(/\s+/g, " ").trim();
+        const md = s.match(RE_SO_DATA);
+        if (md) { data = montarData(Number(md[1]), Number(md[2]), md[3] ? Number(md[3]) : undefined) ?? data; continue; }
+        if (/^\d{3,}$/.test(s)) continue; // nº do documento
+        (t.y > l.y + 1.5 ? acima : t.y < l.y - 1.5 ? embaixo : mesma).push(s);
+      }
+      if (data) dataAtual = data;
+      const descricaoBruta = [...acima, ...mesma].join(" ");
+
+      const movimento = (l.credito !== null ? 1 : 0) + (l.debito !== null ? 1 : 0);
+      if (RE_LINHA_DE_SALDO.test(semAcento(descricaoBruta)) || movimento !== 1) {
+        // "Saldo anterior" / "Total": só atualiza o saldo de referência.
+        if (movimento === 0 && l.saldo !== null) saldoAnterior = l.saldo;
+        continue;
+      }
+      if (!dataAtual) continue;
+      let valor = l.credito !== null ? Math.abs(l.credito) : -Math.abs(l.debito!);
+      if (l.saldo !== null) {
+        if (saldoAnterior !== null) {
+          const diferenca = l.saldo - saldoAnterior;
+          if (diferenca === valor) conferidas++;
+          else if (diferenca === -valor) { valor = -valor; conferidas++; } // coluna trocada: o saldo manda
+          else divergentes++;
+        }
+        saldoAnterior = l.saldo;
+      }
+
+      let recebedor: string | null = null;
+      for (const s of embaixo) {
+        const mRec = s.match(RE_RECEBEDOR);
+        if (mRec) { recebedor = limparTexto(mRec[1]).slice(0, 120) || null; break; }
+        // Nome sem prefixo (quem mandou a transferência, a loja da compra): só letras.
+        if (!recebedor && /^[\p{L}][\p{L} .&'-]{2,}$/u.test(s)) recebedor = limparTexto(s).slice(0, 120);
+      }
+      const descricao = limparTexto(descricaoBruta) || (embaixo[0] ? limparTexto(embaixo[0]) : "") || "Sem descrição";
+      out.push({ data: dataAtual, descricao, valorCentavos: valor, idExterno: null, recebedor });
+      if (out.length >= MAX_LINHAS) return { linhas: out, conferidas, divergentes };
+    }
+  }
+  return achouCabecalho && out.length ? { linhas: out, conferidas, divergentes } : null;
 }
 
 /**

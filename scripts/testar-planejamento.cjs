@@ -281,5 +281,29 @@ eq('fatura sem sinal continua saída', I.lerTextoExtrato(['03/11/2026 GASTOS CAR
 eq('TED crédito sem sinal é entrada', I.lerTextoExtrato(['03/11/2026 TED CREDITO EMPRESA 100,00'], { hoje: '2026-11-07', cartao: false }).linhas[0].valorCentavos, 10000);
 eq('chave recebedor', F.chaveRecebedor('Fulano  de Tal *** 123.456.789-00'), 'fulano de tal');
 
+// --- Extrato em colunas Crédito/Débito/Saldo (layout do Bradesco: histórico em cima, complemento embaixo) ---
+const it = (x, y, s) => ({ x, fim: x + s.length * 4.6, y, s });
+const valor = (fim, y, s) => ({ x: fim - s.length * 4, fim, y, s }); // valores alinhados à direita
+const cab = [it(46, 680, 'Data'), it(110, 680, 'Histórico'), it(305, 680, 'Docto.'), { x: 385, fim: 425.6, y: 680.7, s: 'Crédito (R$)' }, { x: 451.7, fim: 490.1, y: 680.7, s: 'Débito (R$)' }, { x: 519.8, fim: 554.6, y: 680.7, s: 'Saldo (R$)' }];
+const pag1 = [it(200, 777, 'Banco Exemplo'), it(200, 755, 'Data: 08/11/2026 - 16h49'), ...cab,
+  it(46, 644.7, '28/08/2023'), it(110, 649.2, 'TRANSF.AUTORIZ.ENTRE C/C'), it(110, 640.2, 'FULANO DE TAL'), it(303, 644.7, '2856678'), valor(426.8, 644.7, '1.000,00'), valor(550.5, 644.7, '1.000,00'),
+  it(110, 618.8, 'PIX ENVIADO'), it(110, 609.8, 'DES: LOJA EXEMPLO LTDA 02/10'), it(303, 614.3, '2034591'), valor(490.5, 614.3, '134,00'), valor(550.5, 614.3, '866,00'),
+  it(46, 584, '30/10/2023'), it(110, 584, 'VENCIMENTO FUNCIONARIO'), it(303, 584, '9437863'), valor(426.8, 584, '824,20'), valor(550.5, 584, '1.690,20'),
+  it(110, 558.1, 'SAQUE DINHEIRO ATM'), it(110, 549.1, 'Ag02856maq008006seq0740827101354'), it(303, 553.6, '8006408'), valor(490.5, 553.6, '20,00'), valor(550.5, 553.6, '1.670,20')];
+const pag2 = [...cab,
+  it(110, 649.2, 'COMPRA ELO DEBITO VISTA'), it(46, 644.7, '03/11/2023'), it(110, 640.2, 'MERCADO DO BAIRRO'), it(303, 644.7, '0000518'), valor(490.5, 644.7, '70,20'), valor(550.5, 644.7, '1.600,00'),
+  it(46, 600, 'Total'), valor(426.8, 600, '1.824,20'), valor(490.5, 600, '224,20'), valor(550.5, 600, '1.600,00')];
+const tb = I.lerTabelaExtrato([pag1, pag2], { hoje: '2026-11-08' });
+eq('colunas: valores pelo lado (crédito +, débito −)', tb.linhas.map((l) => l.valorCentavos), [100000, -13400, 82420, -2000, -7020]);
+eq('colunas: linha "Total" ignorada e saldo confere', [tb.linhas.length, tb.conferidas, tb.divergentes], [5, 4, 0]);
+eq('colunas: histórico de cima vira descrição (não o nº do documento)', tb.linhas.map((l) => l.descricao), ['TRANSF.AUTORIZ.ENTRE C/C', 'PIX ENVIADO', 'VENCIMENTO FUNCIONARIO', 'SAQUE DINHEIRO ATM', 'COMPRA ELO DEBITO VISTA']);
+eq('colunas: data repete quando a linha não tem', tb.linhas.map((l) => l.data), ['2023-08-28', '2023-08-28', '2023-10-30', '2023-10-30', '2023-11-03']);
+eq('colunas: recebedor (DES:, nome sem prefixo; código do caixa não)', tb.linhas.map((l) => l.recebedor), ['FULANO DE TAL', 'LOJA EXEMPLO LTDA', null, null, 'MERCADO DO BAIRRO']);
+const trocado = [...cab, it(46, 644.7, '01/11/2023'), it(110, 644.7, 'SALDO ANTERIOR'), valor(550.5, 644.7, '500,00'),
+  it(110, 614.3, 'TARIFA'), valor(426.8, 614.3, '10,00'), valor(550.5, 614.3, '490,00')]; // valor na coluna errada: o saldo corrige
+eq('colunas: saldo anterior + saldo corrige coluna trocada', I.lerTabelaExtrato([trocado], { hoje: '2026-11-08' }).linhas.map((l) => l.valorCentavos), [-1000]);
+eq('colunas: sem cabeçalho Crédito/Débito → null (usa texto)', I.lerTabelaExtrato([[it(46, 600, '03/11/2026'), it(110, 600, 'PIX'), valor(500, 600, '10,00')]], { hoje: '2026-11-08' }), null);
+eq('texto: saldo ao lado decide entrada/saída', I.lerTextoExtrato(['01/11/2026 SALDO ANTERIOR 100,00', '02/11/2026 PIX ENVIADO JOAO 50,00 150,00', '03/11/2026 DEPOSITO 20,00 130,00'], { hoje: '2026-11-08', cartao: false }).linhas.map((l) => l.valorCentavos), [5000, -2000]);
+
 console.log(`${ok} ok, ${falhas} falha(s)`);
 process.exit(falhas ? 1 : 0);

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { hojeISO } from "@/lib/datas";
-import { chaveDuplicado, decodificar, lerCsv, lerOfx, lerTextoExtrato, MAX_BYTES, MAX_BYTES_PDF, normalizarSinalCartao, type LinhaImportada } from "@/lib/importacao";
+import { chaveDuplicado, decodificar, lerCsv, lerOfx, lerTabelaExtrato, lerTextoExtrato, MAX_BYTES, MAX_BYTES_PDF, normalizarSinalCartao, type LinhaImportada } from "@/lib/importacao";
 import { linhasDoPdf, PdfComSenha, PdfSemTexto } from "@/lib/pdf";
 import { ehUuid, texto } from "@/lib/seguranca";
 import { requireUser } from "@/lib/supabase/server";
@@ -99,7 +99,10 @@ type Lido = { linhas: LinhaImportada[] } | { erro: string };
 
 async function lerPdf(bytes: Uint8Array, cartao: boolean): Promise<Lido> {
   try {
-    return lerTextoExtrato(await linhasDoPdf(bytes), { hoje: hojeISO(), cartao });
+    const { linhas, paginas } = await linhasDoPdf(bytes);
+    // Extrato com colunas Crédito/Débito: a coluna decide entrada ou saída (e o saldo confere). Senão, leitura por texto.
+    const tabela = cartao ? null : lerTabelaExtrato(paginas, { hoje: hojeISO() });
+    return tabela ?? lerTextoExtrato(linhas, { hoje: hojeISO(), cartao });
   } catch (e) {
     if (e instanceof PdfComSenha) return { erro: "Esse PDF tem senha. Abra no celular ou computador, use Imprimir → Salvar como PDF para gerar uma cópia sem senha e envie de novo." };
     if (e instanceof PdfSemTexto) return { erro: "Esse PDF é uma imagem (foto ou escaneado) e não dá para ler o texto. Baixe o extrato digital no app do banco." };

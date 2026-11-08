@@ -1,4 +1,5 @@
 import "server-only";
+import type { ItemPdf } from "./importacao";
 
 /**
  * Texto de um PDF de extrato, linha por linha, na ordem em que aparece na página.
@@ -13,7 +14,8 @@ const LIMITE_MS = 15_000;
 
 type Item = { str?: string; transform?: number[]; width?: number };
 
-export async function linhasDoPdf(bytes: Uint8Array): Promise<string[]> {
+/** Linhas de texto (para a leitura genérica) e os pedaços com posição por página (para extratos em colunas). */
+export async function linhasDoPdf(bytes: Uint8Array): Promise<{ linhas: string[]; paginas: ItemPdf[][] }> {
   const { getDocumentProxy } = await import("unpdf");
   const tarefa = (async () => {
     let pdf;
@@ -24,15 +26,18 @@ export async function linhasDoPdf(bytes: Uint8Array): Promise<string[]> {
       throw e;
     }
     const linhas: string[] = [];
-    const paginas = Math.min(pdf.numPages, MAX_PAGINAS);
-    for (let n = 1; n <= paginas; n++) {
+    const paginas: ItemPdf[][] = [];
+    const total = Math.min(pdf.numPages, MAX_PAGINAS);
+    for (let n = 1; n <= total; n++) {
       const pagina = await pdf.getPage(n);
       const conteudo = await pagina.getTextContent();
       // Agrupa os pedaços de texto pela altura (y) e ordena por x: reconstrói as linhas da tabela.
       const porLinha = new Map<number, { x: number; fim: number; s: string }[]>();
+      const itens: ItemPdf[] = [];
       for (const it of conteudo.items as unknown as Item[]) {
         if (!it.str || !it.transform) continue;
         const x = it.transform[4], y = it.transform[5];
+        if (it.str.trim()) itens.push({ x, fim: x + (it.width ?? 0), y, s: it.str });
         const chave = [...porLinha.keys()].find((k) => Math.abs(k - y) <= 2.5) ?? y;
         porLinha.set(chave, [...(porLinha.get(chave) ?? []), { x, fim: x + (it.width ?? 0), s: it.str }]);
       }
@@ -45,9 +50,10 @@ export async function linhasDoPdf(bytes: Uint8Array): Promise<string[]> {
         }
         if (texto.trim()) linhas.push(texto.trim());
       }
+      paginas.push(itens);
     }
     if (linhas.join("").replace(/\s/g, "").length < 20) throw new PdfSemTexto();
-    return linhas;
+    return { linhas, paginas };
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const tempo = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("tempo")), LIMITE_MS); });
